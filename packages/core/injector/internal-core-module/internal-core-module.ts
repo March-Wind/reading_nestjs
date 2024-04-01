@@ -28,6 +28,7 @@ const ReflectorAliasProvider = {
     inquirerProvider,
   ],
 })
+// 第一个module是内置的module，也是动态模块
 export class InternalCoreModule {
   static register(
     providers: Array<ValueProvider | FactoryProvider | ExistingProvider>,

@@ -13,7 +13,7 @@ export interface ModuleFactory {
 
 export class ModuleCompiler {
   constructor(private readonly moduleTokenFactory = new ModuleTokenFactory()) {}
-
+  // module转成了type, token是那type和dynamicMetadata生成uuid
   public async compile(
     metatype: Type<any> | DynamicModule | Promise<DynamicModule>,
   ): Promise<ModuleFactory> {

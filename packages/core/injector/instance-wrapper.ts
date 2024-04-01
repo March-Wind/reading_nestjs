@@ -327,7 +327,7 @@ export class InstanceWrapper<T = any> {
     this.setInstanceByInquirerId(contextId, inquirerId, instancePerContext);
     return instancePerContext;
   }
-
+  // 创建原型为对象
   public createPrototype(contextId: ContextId) {
     const host = this.getInstanceByContextId(contextId);
     if (!this.isNewable() || host.isResolved) {

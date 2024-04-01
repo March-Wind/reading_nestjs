@@ -72,7 +72,7 @@ interface ModulesScanParameters {
 }
 
 export class DependenciesScanner {
-  private readonly applicationProvidersApplyMap: ApplicationProviderWrapper[] =
+  private readonly applicationProvidersApplyMap: ApplicationProviderWrapper[] = // 存放所有的Providers
     [];
 
   constructor(
@@ -86,29 +86,42 @@ export class DependenciesScanner {
     module: Type<any>,
     options?: { overrides?: ModuleOverride[] },
   ) {
+    // 注册核心模块，nestjs内置的模块：InternalCoreModule
+    // 目前InternalCoreModule是动态模块，动态的依赖是ExternalContextCreator外部上下文创建期、ModulesContainer模块容、SerializedGraph序列化图、HttpAdapterHostHttp适配器主机、LazyModuleLoader懒加载模块加载器
+    // 静态依赖是Reflect,requestProvider,inquirerProvider,等
     await this.registerCoreModule(options?.overrides);
+    // 扫描模块，建立模块依赖关系，把所有的module都加入到NestContainer中
     await this.scanForModules({
-      moduleDefinition: module,
+      moduleDefinition: module, // 这里是AppModule
       overrides: options?.overrides,
     });
+    // 编译上一步扫描的所有模块(module)，把imports、providers、controllers、exports,加到_imports、_providers、_controllers、_exports上
+    // provider们是第一次被处理，创建InstanceWrapper容器，其他三项的都已经在scanForModules时创建了对应的容器
     await this.scanModulesForDependencies();
+    // 计算模块距离
     this.calculateModulesDistance();
-
+    // 增加作用域来增强元数据
     this.addScopedEnhancersMetadata();
+    // 绑定全局作用域
     this.container.bindGlobalScope();
   }
-
+  // 深度优先遍历module树，
+  // 将每个module放在NestContainer中，是Set数据类型中，并且将编译的
+  // 并且将遍历到的module放在moduleRefs
+  // 返回的是module实例，以及所有在依赖链上的module
   public async scanForModules({
     moduleDefinition,
     lazy,
     scope = [],
-    ctxRegistry = [],
+    ctxRegistry = [], // ctxRegistry用于记录已扫描的module,是构造函数，不是实例；registeredModuleRefs也是用于记录已扫描的module，但是registeredModuleRefs是收集的实例
     overrides = [],
   }: ModulesScanParameters): Promise<Module[]> {
+    // 实例化module并将module加入全局容器NestContainer中
+    // moduleRef是Module类new出来的
     const { moduleRef: moduleInstance, inserted: moduleInserted } =
       (await this.insertOrOverrideModule(moduleDefinition, overrides, scope)) ??
       {};
-
+    // moduleDefinition是{export:xx,provider:xx, module?: xx} 如果有module那么就是动态模块
     moduleDefinition =
       this.getOverrideModuleByModule(moduleDefinition, overrides)?.newModule ??
       moduleDefinition;
@@ -123,6 +136,7 @@ export class DependenciesScanner {
     if (this.isForwardReference(moduleDefinition)) {
       moduleDefinition = (moduleDefinition as ForwardReference).forwardRef();
     }
+    // 获取imports里面的依赖的module
     const modules = !this.isDynamicModule(
       moduleDefinition as Type<any> | DynamicModule,
     )
@@ -137,7 +151,7 @@ export class DependenciesScanner {
           ),
           ...((moduleDefinition as DynamicModule).imports || []),
         ];
-
+    // ctxRegistry用于记录已扫描的module实例
     let registeredModuleRefs = [];
     for (const [index, innerModule] of modules.entries()) {
       // In case of a circular dependency (ES module system), JavaScript will resolve the type to `undefined`.
@@ -150,6 +164,8 @@ export class DependenciesScanner {
       if (ctxRegistry.includes(innerModule)) {
         continue;
       }
+      // 从reflect metadata中取出当前module依赖的所有module
+      // 同时，这里是调用自身，所欲是深度优先遍历
       const moduleRefs = await this.scanForModules({
         moduleDefinition: innerModule,
         scope: [].concat(scope, moduleDefinition),
@@ -166,6 +182,7 @@ export class DependenciesScanner {
     if (lazy && moduleInserted) {
       this.container.bindGlobalsToImports(moduleInstance);
     }
+    // 最终将手机来的module实例返回。
     return [moduleInstance].concat(registeredModuleRefs);
   }
 
@@ -198,6 +215,7 @@ export class DependenciesScanner {
     modules: Map<string, Module> = this.container.getModules(),
   ) {
     for (const [token, { metatype }] of modules) {
+      // 在Module类的实例上，加上import数据
       await this.reflectImports(metatype, token, metatype.name);
       this.reflectProviders(metatype, token);
       this.reflectControllers(metatype, token);
@@ -218,24 +236,28 @@ export class DependenciesScanner {
       ),
     ];
     for (const related of modules) {
+      // 在Module类的实例上，加上import数据
       await this.insertImport(related, token, context);
     }
   }
 
   public reflectProviders(module: Type<any>, token: string) {
     const providers = [
+      // 通过类装饰器的元数据的获取providers,比如AppModule上的providers数据
       ...this.reflectMetadata(MODULE_METADATA.PROVIDERS, module),
+      // 通过register注入的依赖
       ...this.container.getDynamicMetadataByToken(
         token,
         MODULE_METADATA.PROVIDERS as 'providers',
       ),
     ];
     providers.forEach(provider => {
+      // 将provider放进Module实例的provider上
       this.insertProvider(provider, token);
       this.reflectDynamicMetadata(provider, token);
     });
   }
-
+  // 将controllers加入Module示例的controller上
   public reflectControllers(module: Type<any>, token: string) {
     const controllers = [
       ...this.reflectMetadata(MODULE_METADATA.CONTROLLERS, module),
@@ -246,10 +268,13 @@ export class DependenciesScanner {
     ];
     controllers.forEach(item => {
       this.insertController(item, token);
-      this.reflectDynamicMetadata(item, token);
+      // 处理@UsePipes, @UseInterceptors, @Post等装饰器注入一些enhancer或者定义一些路由规则，这些属于DynamicMetadata
+      this.reflectDynamicMetadata(item, token); 
     });
   }
-
+  // injectable的元数据,相当于provider的元数据
+  // 这里是拦截器的创建
+  // 处理@UsePipes, @UseInterceptors, @Post等装饰器注入一些enhancer或者定义一些路由规则，这些属于DynamicMetadata
   public reflectDynamicMetadata(cls: Type<Injectable>, token: string) {
     if (!cls || !cls.prototype) {
       return;
@@ -273,16 +298,19 @@ export class DependenciesScanner {
       this.insertExportedProvider(exportedProvider, token),
     );
   }
-
+  // 反射injestable的元数据
   public reflectInjectables(
-    component: Type<Injectable>,
+    component: Type<Injectable>, // provider的class
     token: string,
     metadataKey: string,
   ) {
+    // constructor可注入的数据
     const controllerInjectables = this.reflectMetadata<Type<Injectable>>(
       metadataKey,
       component,
     );
+    // getAllMethodNames收集prototype上所有的方法名
+    // 如果是可注入的方法，就返回出来methodInjectables
     const methodInjectables = this.metadataScanner
       .getAllMethodNames(component.prototype)
       .reduce((acc, method) => {
@@ -298,7 +326,7 @@ export class DependenciesScanner {
 
         return acc;
       }, []);
-
+    
     controllerInjectables.forEach(injectable =>
       this.insertInjectable(
         injectable,
@@ -432,10 +460,14 @@ export class DependenciesScanner {
   }
 
   public insertProvider(provider: Provider, token: string) {
+    // {provider: xxx}就是自定义的provider
+    // 直接写Reflect就是非自定义的provider
     const isCustomProvider = this.isCustomProvider(provider);
     if (!isCustomProvider) {
+      // 放进对应的Module实例上的provider上
       return this.container.addProvider(provider as Type<any>, token);
     }
+    // 自定义provider的处理
     const applyProvidersMap = this.getApplyProvidersMap();
     const providersKeys = Object.keys(applyProvidersMap);
     const type = (
@@ -445,7 +477,7 @@ export class DependenciesScanner {
         | FactoryProvider
         | ExistingProvider
     ).provide;
-
+    // 如果不是APP_INTERCEPTOR、APP_PIPE、APP_GUARD、APP_FILTER这四类，还是直接放进对应的Module实例上的provider上
     if (!providersKeys.includes(type as string)) {
       return this.container.addProvider(provider as any, token);
     }
@@ -483,6 +515,7 @@ export class DependenciesScanner {
     if (this.isRequestOrTransient(factoryOrClassProvider.scope)) {
       return this.container.addInjectable(newProvider, token, enhancerSubtype);
     }
+    // 换种字段组织格式再放对应的Module实例上的provider上
     this.container.addProvider(newProvider, token, enhancerSubtype);
   }
 
@@ -597,7 +630,7 @@ export class DependenciesScanner {
       scope,
     );
   }
-
+  // 获取元数据
   public reflectMetadata<T = any>(
     metadataKey: string,
     metatype: Type<any>,
@@ -614,6 +647,7 @@ export class DependenciesScanner {
       this.graphInspector,
       overrides,
     );
+    // 加载了InternalCoreModule的依赖module
     const [instance] = await this.scanForModules({
       moduleDefinition,
       overrides,
@@ -648,15 +682,19 @@ export class DependenciesScanner {
   }
 
   public applyApplicationProviders() {
+    // 注入全局各类型拦截器的方法· scope是DEFAULT
     const applyProvidersMap = this.getApplyProvidersMap();
+    // 注入一次请求各分类拦截器的方法，scope是REQUEST
     const applyRequestProvidersMap = this.getApplyRequestProvidersMap();
-
+    // 获取实例的外包装
     const getInstanceWrapper = (
       moduleKey: string,
       providerKey: string,
       collectionKey: 'providers' | 'injectables',
     ) => {
+      // 获取所有module
       const modules = this.container.getModules();
+      // 获取这个module的providers或者injectables
       const collection = modules.get(moduleKey)[collectionKey];
       return collection.get(providerKey);
     };
@@ -752,3 +790,4 @@ export class DependenciesScanner {
     return scope === Scope.REQUEST || scope === Scope.TRANSIENT;
   }
 }
+

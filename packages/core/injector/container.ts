@@ -29,7 +29,7 @@ export class NestContainer {
   private readonly globalModules = new Set<Module>();
   private readonly moduleTokenFactory = new ModuleTokenFactory();
   private readonly moduleCompiler = new ModuleCompiler(this.moduleTokenFactory);
-  private readonly modules = new ModulesContainer();
+  private readonly modules = new ModulesContainer(); // 存放了所有的module,类似AppModule
   private readonly dynamicModulesMetadata = new Map<
     string,
     Partial<DynamicModule>
@@ -69,7 +69,7 @@ export class NestContainer {
   }
 
   public async addModule(
-    metatype: ModuleMetatype,
+    metatype: ModuleMetatype, // 还有一个module的元数据
     scope: ModuleScope,
   ): Promise<
     | {
@@ -83,6 +83,9 @@ export class NestContainer {
     if (!metatype) {
       throw new UndefinedForwardRefException(scope);
     }
+    // type就是Module class本身,比如AppModule
+    // dynamicMetadata(dynamic module的imports, providers等
+    // token就是module的唯一标识
     const { type, dynamicMetadata, token } =
       await this.moduleCompiler.compile(metatype);
     if (this.modules.has(token)) {
@@ -93,7 +96,7 @@ export class NestContainer {
     }
 
     return {
-      moduleRef: await this.setModule(
+      moduleRef: await this.setModule( // 放进NestContainer
         {
           token,
           type,

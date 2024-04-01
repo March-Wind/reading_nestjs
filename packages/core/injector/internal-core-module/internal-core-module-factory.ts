@@ -41,7 +41,7 @@ export class InternalCoreModuleFactory {
         moduleOverrides,
       );
     };
-
+    // 这里就是根module的动态依赖，使用register方法注册了一些provider
     return InternalCoreModule.register([
       {
         provide: ExternalContextCreator,

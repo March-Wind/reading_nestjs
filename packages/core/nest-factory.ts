@@ -74,14 +74,16 @@ export class NestFactoryStatic {
     const [httpServer, appOptions] = this.isHttpServer(serverOrOptions)
       ? [serverOrOptions, options]
       : [this.createHttpAdapter(), serverOrOptions];
-
+    // 全局配置
     const applicationConfig = new ApplicationConfig();
+    // 根容器，也就是IoC容器，包含module的所有方法
     const container = new NestContainer(applicationConfig);
+    // 依赖图检查器，给debug工具用的
     const graphInspector = this.createGraphInspector(appOptions, container);
 
     this.setAbortOnError(serverOrOptions, options);
     this.registerLoggerConfiguration(appOptions);
-
+    // 初始化，依赖注入的核心逻辑
     await this.initialize(
       moduleCls,
       container,
@@ -90,7 +92,7 @@ export class NestFactoryStatic {
       appOptions,
       httpServer,
     );
-
+    // 应用实例
     const instance = new NestApplication(
       container,
       httpServer,
@@ -189,7 +191,7 @@ export class NestFactoryStatic {
   }
 
   private async initialize(
-    module: any,
+    module: any, // 根module,也就是初始化nestjs项目的AppModule
     container: NestContainer,
     graphInspector: GraphInspector,
     config = new ApplicationConfig(),
@@ -199,14 +201,17 @@ export class NestFactoryStatic {
     UuidFactory.mode = options.snapshot
       ? UuidFactoryMode.Deterministic
       : UuidFactoryMode.Random;
-
+    // 依赖注入器，管理依赖注入的核心逻辑
     const injector = new Injector({ preview: options.preview });
+    // 实例加载器，实例化对象的核心逻辑
     const instanceLoader = new InstanceLoader(
       container,
       injector,
       graphInspector,
     );
+    // 元数据扫描器，typescript编译类装饰器之后，留下的元数据
     const metadataScanner = new MetadataScanner();
+    // 依赖扫描器，import、controllers、providers等
     const dependenciesScanner = new DependenciesScanner(
       container,
       metadataScanner,
@@ -219,11 +224,14 @@ export class NestFactoryStatic {
     await httpServer?.init();
     try {
       this.logger.log(MESSAGES.APPLICATION_START);
-
+      // keynote: 这里是核心逻辑的开始
       await ExceptionsZone.asyncRun(
         async () => {
+          // 从根module开始扫描依赖的module，以及对初始化各种容器(Module、InstanceWrapper)实例
           await dependenciesScanner.scan(module);
+          // 创建本身实例，比如实例化AppController
           await instanceLoader.createInstancesOfDependencies();
+          // 将提供者注入依赖者，比如将AppService注入AppController
           dependenciesScanner.applyApplicationProviders();
         },
         teardown,

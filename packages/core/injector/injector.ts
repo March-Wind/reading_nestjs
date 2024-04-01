@@ -81,7 +81,7 @@ export class Injector {
   private logger: LoggerService = new Logger('InjectorLogger');
 
   constructor(private readonly options?: { preview: boolean }) {}
-
+  // 从原型创建实例
   public loadPrototype<T>(
     { token }: InstanceWrapper<T>,
     collection: Map<InjectionToken, InstanceWrapper<T>>,
@@ -100,7 +100,7 @@ export class Injector {
       collection.set(token, wrapper);
     }
   }
-
+  // 通过检索constructor参数来注入依赖
   public async loadInstance<T>(
     wrapper: InstanceWrapper<T>,
     collection: Map<InjectionToken, InstanceWrapper>,
@@ -140,7 +140,10 @@ export class Injector {
     }
     try {
       const t0 = this.getNowTimestamp();
+      // 解析出来所有的依赖后，调用
+      // keynote: 这里是最终组装依赖的地方
       const callback = async (instances: unknown[]) => {
+        // 这里获取所有的属性
         const properties = await this.resolveProperties(
           wrapper,
           moduleRef,
@@ -149,6 +152,7 @@ export class Injector {
           wrapper,
           inquirer,
         );
+        // 这里进行初始化
         const instance = await this.instantiateClass(
           instances,
           wrapper,
@@ -156,10 +160,12 @@ export class Injector {
           contextId,
           inquirer,
         );
+        // 放入属性
         this.applyProperties(instance, properties);
         wrapper.initTime = this.getNowTimestamp() - t0;
         settlementSignal.complete();
       };
+      // 解析constructor参数，并找到依赖实例，然后回调callback去注入
       await this.resolveConstructorParams<T>(
         wrapper,
         moduleRef,
@@ -271,6 +277,7 @@ export class Injector {
     const metadata = wrapper.getCtorMetadata();
 
     if (metadata && contextId !== STATIC_CONTEXT) {
+      // 从constructor获取依赖列表
       const deps = await this.loadCtorMetadata(
         metadata,
         contextId,
@@ -283,6 +290,7 @@ export class Injector {
     const isFactoryProvider = !isNil(inject);
     const [dependencies, optionalDependenciesIds] = isFactoryProvider
       ? this.getFactoryProviderDependencies(wrapper)
+        // 获取constructor所有的依赖项
       : this.getClassDependencies(wrapper);
 
     let isResolved = true;
@@ -295,6 +303,7 @@ export class Injector {
           inquirer = parentInquirer;
           inquirerId = this.getInquirerId(parentInquirer);
         }
+        // 查找实例
         const paramWrapper = await this.resolveSingleParam<T>(
           wrapper,
           param,
@@ -323,7 +332,7 @@ export class Injector {
     const instances = await Promise.all(dependencies.map(resolveParam));
     isResolved && (await callback(instances));
   }
-
+  // 获取constructor所有依赖项
   public getClassDependencies<T>(
     wrapper: InstanceWrapper<T>,
   ): [InjectorDependency[], number[]] {
@@ -364,7 +373,7 @@ export class Injector {
       optionalDependenciesIds,
     ];
   }
-
+  // ts的方式注入的(design:paramtypes)
   public reflectConstructorParams<T>(type: Type<T>): any[] {
     const paramtypes = [
       ...(Reflect.getMetadata(PARAMTYPES_METADATA, type) || []),
@@ -378,7 +387,7 @@ export class Injector {
   public reflectOptionalParams<T>(type: Type<T>): any[] {
     return Reflect.getMetadata(OPTIONAL_DEPS_METADATA, type) || [];
   }
-
+  // @Inject(token?)形式注入的(self:paramtypes)
   public reflectSelfParams<T>(type: Type<T>): any[] {
     return Reflect.getMetadata(SELF_DECLARED_DEPS_METADATA, type) || [];
   }
@@ -502,7 +511,7 @@ export class Injector {
     }
     return instanceWrapper;
   }
-
+  // 查找依赖的类
   public async lookupComponent<T = any>(
     providers: Map<Function | string | symbol, InstanceWrapper>,
     moduleRef: Module,
@@ -522,12 +531,14 @@ export class Injector {
         { id: wrapper.id },
       );
     }
+    // 第一种：是与当前对象同Module的providers
     if (providers.has(name)) {
       const instanceWrapper = providers.get(name);
       this.printFoundInModuleLog(name, moduleRef);
       this.addDependencyMetadata(keyOrIndex, wrapper, instanceWrapper);
       return instanceWrapper;
     }
+    // 第二种：被当前模块通过imports引入模块的
     return this.lookupComponentInParentModules(
       dependencyContext,
       moduleRef,
@@ -546,6 +557,7 @@ export class Injector {
     inquirer?: InstanceWrapper,
     keyOrIndex?: symbol | string | number,
   ) {
+    // 在module树上查找依赖项的实例
     const instanceWrapper = await this.lookupComponentInImports(
       moduleRef,
       dependencyContext.name,
@@ -741,8 +753,9 @@ export class Injector {
       instanceHost.isResolved = true;
       return instanceHost.instance;
     }
-
+    // AppConstructor 在这里初始化，就是用了new
     if (isNil(inject) && isInContext) {
+      // 如果是循环引用的话，就用Object.assign将new出来的对象的自有属性，复制到之前使用原型链创建的对象上。
       instanceHost.instance = wrapper.forwardRef
         ? Object.assign(
             instanceHost.instance,
